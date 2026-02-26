@@ -1,5 +1,4 @@
-# ====================================================
-#circlize_function
+#circlize table
 
 # Load taxonomy data, extract OTU/phylum information
 taxonomy <- read.delim('taxonomy.txt', sep = '\t', stringsAsFactors = FALSE)
@@ -151,6 +150,79 @@ circos.par(cell.padding = c(0, 0, 0, 0), start.degree = 270, gap.degree = gap_si
 circos.initialize(factors = factor(all_ID, levels = all_ID), xlim = all_ID_xlim)
 
 # Draw tracks (same as above)
+
+# Draw phylum and group highlights (first track)
+circos.trackPlotRegion(
+  ylim = c(0, 1), track.height = 0.03, bg.border = NA,
+  panel.fun = function(x, y) {
+    sector.index = get.cell.meta.data('sector.index')
+    xlim = get.cell.meta.data('xlim')
+    ylim = get.cell.meta.data('ylim')
+  } )
+
+for (i in 1:length(tax_phylum)) {
+  tax_OTU <- {subset(taxonomy, phylum == tax_phylum[i])}$OTU_ID
+  highlight.sector(tax_OTU, track.index = 1, col = color_phylum[i], text = tax_phylum[i], cex = 0.5, text.col = 'black', niceFacing = FALSE)
+}
+
+for (i in 1:length(all_group)) {
+  group_sample <- {subset(group, group_ID == all_group[i])}$sample_ID
+  highlight.sector(group_sample, track.index = 1, col = color_group[i], text = all_group[i], cex = 0.7, text.col = 'black', niceFacing = FALSE)
+}
+
+# Draw percentage annotations (second track)
+circos.trackPlotRegion(
+  ylim = c(0, 1), track.height = 0.05, bg.border = NA,
+  panel.fun = function(x, y) {
+    sector.index = get.cell.meta.data('sector.index')
+    xlim = get.cell.meta.data('xlim')
+    ylim = get.cell.meta.data('ylim')
+  } )
+
+circos.track(
+  track.index = 2, bg.border = NA,
+  panel.fun = function(x, y) {
+    xlim = get.cell.meta.data('xlim')
+    ylim = get.cell.meta.data('ylim')
+    sector.name = get.cell.meta.data('sector.index')
+    xplot = get.cell.meta.data('xplot')
+    
+    by = ifelse(abs(xplot[2] - xplot[1]) > 30, 0.25, 1)
+    for (p in c(0, seq(by, 1, by = by))) circos.text(p*(xlim[2] - xlim[1]) + xlim[1], mean(ylim) + 0.4, paste0(p*100, '%'), cex = 0.4, adj = c(0.5, 0), niceFacing = FALSE)
+    
+    circos.lines(xlim, c(mean(ylim), mean(ylim)), lty = 3)
+  } )
+
+# Draw OTU and sample sectors (third track)
+circos.trackPlotRegion(
+  ylim = c(0, 1), track.height = 0.03, bg.col = c(color_otu, color_sample), bg.border = NA, track.margin = c(0, 0.01),
+  panel.fun = function(x, y) {
+    xlim = get.cell.meta.data('xlim')
+    sector.name = get.cell.meta.data('sector.index')
+    circos.axis(h = 'top', labels.cex = 0.4, major.tick.percentage = 0.4, labels.niceFacing = FALSE)
+    circos.text(mean(xlim), 0.2, sector.name, cex = 0.4, niceFacing = FALSE, adj = c(0.5, 0))
+  } )
+
+# Draw empty track (fourth track)
+circos.trackPlotRegion(ylim = c(0, 1), track.height = 0.03, track.margin = c(0, 0.01))
+
+# Reset accumulators
+accum_otu <- rowSums(otu_table)
+accum_sample <- colSums(otu_table)
+
+# Draw links between OTUs and samples (fifth track)
+for (i in seq_len(nrow(plot_data))) {
+  circos.link(
+    plot_data[i,2], c(accum_otu[plot_data[i,2]], accum_otu[plot_data[i,2]] - plot_data[i,4]),
+    plot_data[i,1], c(accum_sample[plot_data[i,1]], accum_sample[plot_data[i,1]] - plot_data[i,3]),
+    col = paste0(color_otu[plot_data[i,2]], '70'), border = NA )
+  
+  circos.rect(accum_otu[plot_data[i,2]], 0, accum_otu[plot_data[i,2]] - plot_data[i,4], 1, sector.index = plot_data[i,2], col = color_sample[plot_data[i,1]], border = NA)
+  circos.rect(accum_sample[plot_data[i,1]], 0, accum_sample[plot_data[i,1]] - plot_data[i,3], 1, sector.index = plot_data[i,1], col = color_otu[plot_data[i,2]], border = NA)
+  
+  accum_otu[plot_data[i,2]] = accum_otu[plot_data[i,2]] - plot_data[i,4]
+  accum_sample[plot_data[i,1]] = accum_sample[plot_data[i,1]] - plot_data[i,3]
+}
 
 # Create legend
 otu_legend <- Legend(
