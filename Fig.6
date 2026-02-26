@@ -1,0 +1,190 @@
+# ====================================================
+# PCA Analysis_YAS Dimension Reduction
+library(vegan)
+
+# Read environmental data
+env <- read.delim('total_y_a.txt', row.names= 1, sep = '\t', stringsAsFactors = FALSE, check.names = FALSE)
+
+## PCA Analysis
+# Standardize data
+pca_env <- rda(env, scale = TRUE)
+
+# Type I scaling
+summary(pca_env, scaling = 1)
+# Type II scaling
+#summary(pca_env, scaling = 2)
+
+# Get eigenvalues of principal components (PCA axes)
+pca_eig <- pca_env$CA$eig
+# Calculate variance explained by each component
+pca_exp <- pca_env$CA$eig / sum(pca_env$CA$eig)
+
+# Get site coordinates, using Type I scaling as example, extract first two axes
+# scores() to get site coordinates
+site.scaling1 <- scores(pca_env, choices = 1:2, scaling = 1, display = 'site')
+# Alternatively from summary
+site.scaling1 <- summary(pca_env, scaling = 1)$sites[ ,1:2]
+site.scaling1
+#write.table(site.scaling1, 'site.scaling1.txt', col.names = NA, sep = '\t', quote = FALSE)
+
+# Get environmental factor coordinates, using Type II scaling as example, extract first two axes
+# scores() to get environmental factor coordinates
+env.scaling2 <- scores(pca_env, choices = 1:2, scaling = 2, display = 'sp')
+# Alternatively from summary
+env.scaling2 <- summary(pca_env, scaling = 2)$species[ ,1:2]
+env.scaling2
+#write.table(env.scaling2, 'env.scaling2.txt', col.names = NA, sep = '\t', quote = FALSE)
+
+# Calculate variance explained for plot labels
+pc1 <- paste('PC1:', round(pca_exp[1]*100, 2), '%')
+pc2 <- paste('PC2:', round(pca_exp[2]*100, 2), '%')
+
+# Plot biplot comparing two scaling types
+par(mfrow = c(1, 2))
+biplot(pca_env, choices = c(1, 2), scaling = 1, main = 'Type I scaling', col = c('red', 'blue'), xlab = pc1, ylab = pc2)
+biplot(pca_env, choices = c(1, 2), scaling = 2, main = 'Type II scaling', col = c('red', 'blue'), xlab = pc1, ylab = pc2)
+
+# Get Type I scaling environmental factor coordinates
+env.scaling1 <- summary(pca_env, scaling = 1)$species[ ,1:2]
+
+# Save as PDF file
+cairo_pdf('pca_env.pdf', width = 6, height = 6, family = "SimSun")  # SimSun is Song typeface
+
+ordiplot(pca_env, type = 'n', choices = c(1, 2), scaling = 1, 
+         main = 'Type I scaling', xlab = pc1, ylab = pc2)
+points(pca_env, dis = 'site', choices = c(1, 2), scaling = 1, 
+       pch = 21, bg = c(rep('#D0D8EB', 3), rep('#4682B4', 3), 
+                        rep('#F9DCDE', 3), rep('#A31F24', 3)), 
+       col = NA, cex = 1.2)
+arrows(0, 0, env.scaling1[ ,1], env.scaling1[ ,2], length = 0.1, lty = 1, col = 'blue')
+text(pca_env, dis = 'sp', choices = c(1, 2), scaling = 1, col = 'black', cex = 0.8)
+
+dev.off()
+
+# ====================================================
+# PLSPM Model Analysis
+library(plspm)
+
+# Read data
+dat <- read.delim('environment.txt', sep = '\t')
+
+# Specify latent variables: R uses list to store relationships for each latent variable
+# Each element directly specifies column names
+dat_blocks <- list(
+  active_species = c('ASV_2328', 'ASV_8702','ASV_2124', 'ASV_7423', 'ASV_6722', 'ASV_3723', 'ASV_4681', 'ASV_3340'),
+  Growth_rate = 'total_growth',
+  CUE = 'CUE'
+)
+
+dat_blocks
+
+# Set relationship matrix between latent variables through 0-1 matrix: 0 means no relationship, 1 means relationship exists
+active_species <- c(0, 0, 0)
+Growth_rate <- c(1, 0, 0)
+CUE <- c(1, 1, 0)
+
+dat_path <- rbind(active_species, Growth_rate, CUE)
+colnames(dat_path) <- rownames(dat_path)
+dat_path
+
+## Build outer model: select corresponding observed variables (columns) for latent variables from dataframe
+# Specify measurement relationships: 'A' for reflective measurement model, 'B' for formative measurement model
+dat_modes <- rep('A', 3)
+dat_modes
+
+# Simple PLS-PM path analysis modeling: plspm
+dat_pls <- plspm(dat, dat_path, dat_blocks, modes = dat_modes)
+dat_pls
+summary(dat_pls)
+
+# Output contains many results, refer to plspm user manual for details:
+# Official manual, 235 pages: https://www.gastonsanchez.com/PLS_Path_Modeling_with_R.pdf
+# Getting started, 10 pages: https://rdrr.io/cran/plspm/f/inst/doc/plspm_introduction.pdf
+
+# Below are some common operations
+
+# View path coefficient estimates and related statistical information
+dat_pls$path_coefs
+dat_pls$inner_model
+
+# Visualize inner relationships with path diagram: innerplot
+innerplot(dat_pls, colpos = 'red', colneg = 'blue', show.values = TRUE, lcol = 'gray', box.lwd = 0)
+
+# View p-values of path coefficients, convenient for annotation in PPT or AI
+dat_pls$inner_model
+# View goodness of fit index, GOF > 0.7 indicates reliable model
+dat_pls$gof
+summary(dat_pls)
+
+# Read data
+dat <- read.delim('environment.txt', sep = '\t')
+
+# Specify latent variables: R uses list to store relationships for each latent variable
+# Each element directly specifies column names
+dat_blocks <- list(
+  soil = 'soil', 
+  protist = 'protist',
+  active_species_1 = c('ASV_6722'),
+  active_species_2 = c('ASV_7423'),
+  Growth_rate = 'total_growth',
+  CUE = 'CUE'
+)
+
+dat_blocks
+
+# Set relationship matrix between latent variables through 0-1 matrix: 0 means no relationship, 1 means relationship exists
+soil <- c(0, 0, 0, 0, 0, 0)
+protist <- c(0, 0, 0, 0, 0, 0)
+active_species_1 <- c(1, 0, 0, 0, 0, 0)
+active_species_2 <- c(1, 1, 0, 0, 0, 0)
+Growth_rate <- c(0, 1, 1, 1, 0, 0)
+CUE <- c(0, 0, 1, 0, 1, 0)
+
+dat_path <- rbind(soil, protist, active_species_1, active_species_2, Growth_rate, CUE)
+colnames(dat_path) <- rownames(dat_path)
+dat_path
+
+## Build outer model: select corresponding observed variables (columns) for latent variables from dataframe
+# Specify measurement relationships: 'A' for reflective measurement model, 'B' for formative measurement model
+dat_modes <- rep('A', 6)
+dat_modes
+
+# Simple PLS-PM path analysis modeling: plspm
+dat_pls <- plspm(dat, dat_path, dat_blocks, modes = dat_modes)
+dat_pls
+summary(dat_pls)
+
+# Output contains many results, refer to plspm user manual for details:
+# Official manual, 235 pages: https://www.gastonsanchez.com/PLS_Path_Modeling_with_R.pdf
+# Getting started, 10 pages: https://rdrr.io/cran/plspm/f/inst/doc/plspm_introduction.pdf
+
+# Below are some common operations
+
+# View path coefficient estimates and related statistical information
+dat_pls$path_coefs
+dat_pls$inner_model
+
+# Visualize inner relationships with path diagram: innerplot
+innerplot(dat_pls, colpos = 'red', colneg = 'blue', show.values = TRUE, lcol = 'gray', box.lwd = 0)
+
+# View p-values of path coefficients, convenient for annotation in PPT or AI
+dat_pls$inner_model
+# View goodness of fit index, GOF > 0.7 indicates reliable model
+dat_pls$gof
+summary(dat_pls)
+
+# Manually calculate GOF
+# GOF = sqrt(average communality × average R²)
+
+# Extract R² from results
+r2_values <- c(0.495, 0.829, 0.952, 0.783)  # R² of endogenous latent variables
+mean_r2 <- mean(r2_values)
+
+# Communality (all latent variables have value 1)
+communalities <- rep(1, 6)  # 6 latent variables
+mean_communality <- mean(communalities)
+
+# Calculate GOF
+gof_manual <- sqrt(mean_communality * mean_r2)
+print(paste("Manually calculated GOF:", gof_manual))
+print(paste("Average R²:", mean_r2))
