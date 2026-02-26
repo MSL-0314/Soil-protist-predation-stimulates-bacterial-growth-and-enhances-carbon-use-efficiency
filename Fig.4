@@ -1,0 +1,262 @@
+# ====================================================
+#Qsip tree data prepared
+library(data.table)
+library(stringr)
+library(DESeq2)
+library(Biostrings)
+
+#1.读取数据
+load("../../02-数据计算/qSIP_res_freeze_total_corrected √.rdata")
+
+
+#2.生长速率、死亡速率的上调下调（基于置信区间是否交叉）
+
+#根据P2和P0处理转换为长格式
+gd <- res$pop2[variable %in% c('growth','mortality'),]
+P0 <- gd[protist=='P0',]
+P2 <- gd[protist=='P2',]
+gd <- merge(P2,P0,by = c('asv_id','soil','variable'),all = T)
+gd[is.na(gd)] <- 0
+
+#P2和P0的growth或mortality CI均不覆盖0时，计算log2FC=log2(P2/P0)
+#P0 CI覆盖0，而P2 CI不覆盖0时，标up
+#P2 CI覆盖0，而P0 CI不覆盖0时，标down
+gd[variable=='growth' & `5%.x`>0 & `5%.y`<=0, 'log2FC'] <- 'up'
+gd[variable=='growth' & `5%.x`<=0 & `5%.y`>0, 'log2FC'] <- 'down'
+gd[variable=='growth' & `5%.x`<=0 & `5%.y`<=0, 'log2FC'] <- 'both_not_significant'
+gd[variable=='growth' & `5%.x`>0 & `5%.y`>0, log2FC := log2(`50%.x`/`50%.y`)]
+
+gd[variable=='mortality' & `95%.x`<0 & `95%.y`>=0, 'log2FC'] <- 'up' #由于mortality方向与growth相反，使用95%处数值判断CI是否覆盖0，且判断方向与growth相反
+gd[variable=='mortality' & `95%.x`>=0 & `95%.y`<0, 'log2FC'] <- 'down'
+gd[variable=='mortality' & `95%.x`>=0 & `95%.y`>=0, 'log2FC'] <- 'both_not_significant'
+gd[variable=='mortality' & `95%.x`<0 & `95%.y`<0, log2FC := log2(`50%.x`/`50%.y`)]
+
+#根据CI是否交叉，标记显著上调或下调
+gd[variable=='growth' & `5%.x`>`95%.y`, 'label'] <- 'up'
+gd[variable=='growth' & `5%.y`>`95%.x`, 'label'] <- 'down'
+
+gd[variable=='mortality' & `95%.x`<`5%.y`, 'label'] <- 'up'
+gd[variable=='mortality' & `95%.y`<`5%.x`, 'label'] <- 'down'
+
+gd[log2FC=='both_not_significant','label'] <- NA  #如果两个处理的CI都与0交叉，即使处理间不交叉也不展示显著上下调
+
+#根据soil和variable拆分，更换列名，并合并为长格式
+BG <- gd[soil=='B'&variable=='growth',]
+RG <- gd[soil=='R'&variable=='growth',]
+BG <- BG[log2FC!='both_not_significant',]  #生长速率只保留both_not_significant以外的结果
+RG <- RG[log2FC!='both_not_significant',]  #生长速率只保留both_not_significant以外的结果
+BM <- gd[soil=='B'&variable=='mortality',]
+RM <- gd[soil=='R'&variable=='mortality',]
+setnames(BG,c('log2FC','label'),c('BG_log2FC','BG_label'))
+setnames(RG,c('log2FC','label'),c('RG_log2FC','RG_label'))
+setnames(BM,c('log2FC','label'),c('BM_log2FC','BM_label'))
+setnames(RM,c('log2FC','label'),c('RM_log2FC','RM_label'))
+
+#横向合并数据
+gd <- merge(BG[,c(1,14,15)],RG[,c(1,14,15)],by = c('asv_id'),all = T)
+gd <- merge(gd,BM[,c(1,14,15)],by = c('asv_id'),all = T)
+gd <- merge(gd,RM[,c(1,14,15)],by = c('asv_id'),all = T)
+gd <- gd[(!BG_log2FC %in% c(NA,'both_not_significant'))|(!RG_log2FC %in% c(NA,'both_not_significant')),] #删除两种土壤生长速率都为'both_not_significant'或NA的ASV
+
+rm(P0,P2,BG,RG,BM,RM)  #删除中间变量
+
+
+#3. ASV丰度的上调下调（Deseq2）
+
+table <- res$table
+group <- data.frame(sample_id=names(table)[1:12],soil=str_extract(names(table)[1:12],"^([BR])_(P\\d)_\\d",group = 1),protist=str_extract(names(table)[1:12],"^([BR])_(P\\d)_\\d",group = 2))
+group$protist <- factor(group$protist,levels = c('P0','P2'))
+B <- table[,group[group$soil=='B','sample_id']]
+R <- table[,group[group$soil=='R','sample_id']]
+B <- B[which(rowSums(B)!=0),]  #去除丰度为0的asv
+R <- R[which(rowSums(R)!=0),]  #去除丰度为0的asv
+B2 <- as.data.frame(apply(B,2,function(x){as.integer(round(x)/10)})) #四舍五入取整，deseq要求必须为整数，使用as.integer时，R语言的integer范围为-2147483648到2147483647（2.147e+09），超过范围会报错，因此将所有数据除以10
+R2 <- as.data.frame(apply(R,2,function(x){as.integer(round(x)/10)})) #四舍五入取整，deseq要求必须为整数，使用as.integer时，R语言的integer范围为-2147483648到2147483647（2.147e+09），超过范围会报错，因此将所有数据除以10
+row.names(B2) <- row.names(B)  #添加ASV_id为行名
+row.names(R2) <- row.names(R)  #添加ASV_id为行名
+
+#DESeq2 流程
+#第一步，构建 DESeqDataSet 对象，详见 ?DESeqDataSetFromMatrix
+dds_B <- DESeqDataSetFromMatrix(countData = B2, colData = group[group$soil=='B',], design = ~protist)
+dds_R <- DESeqDataSetFromMatrix(countData = R2, colData = group[group$soil=='R',], design = ~protist)
+
+#第二步，差异分析，详见 ?DESeq 和 ?results
+dds_B <- DESeq(dds_B, parallel = T)	#parallel = TRUE 将启用多线程模式   警告信息是bug：In serialize(data, node$con) :'package:stats' may not be available when loading
+dds_R <- DESeq(dds_R, parallel = T)	#parallel = TRUE 将启用多线程模式   警告信息是bug：In serialize(data, node$con) :'package:stats' may not be available when loading
+
+#第三步，提取结果，与asv表结果合并，储存为RData
+res_B <- results(dds_B, contrast = c('protist', 'P2', 'P0'), pAdjustMethod = 'BH', alpha = 0.05) #可更换p值校正方法 pAdjustMethod = 'fdr'
+res_B <- as.data.frame(res_B[order(res_B$log2FoldChange,decreasing = T), ])  #结果转换为数据框并按log2FoldChange大小排序
+res_R <- results(dds_R, contrast = c('protist', 'P2', 'P0'), pAdjustMethod = 'BH', alpha = 0.05) #可更换p值校正方法 pAdjustMethod = 'fdr'
+res_R <- as.data.frame(res_R[order(res_R$log2FoldChange,decreasing = T), ])  #结果转换为数据框并按log2FoldChange大小排序
+
+#整理数据格式
+res_B$asv_id <- row.names(res_B)
+res_B[which(res_B$log2FoldChange>0&res_B$pvalue<0.05),'BA_label'] <- 'up'
+res_B[which(res_B$log2FoldChange<0&res_B$pvalue<0.05),'BA_label'] <- 'down'
+names(res_B)[2] <- 'BA_log2FC'
+
+res_R$asv_id <- row.names(res_R)
+res_R[which(res_R$log2FoldChange>0&res_R$pvalue<0.05),'RA_label'] <- 'up'
+res_R[which(res_R$log2FoldChange<0&res_R$pvalue<0.05),'RA_label'] <- 'down'
+names(res_R)[2] <- 'RA_log2FC'
+
+#横向合并数据
+gd <- merge(gd,res_B[,c('asv_id','BA_log2FC','BA_label')],by = c('asv_id'),all.x = T)
+gd <- merge(gd,res_R[,c('asv_id','RA_log2FC','RA_label')],by = c('asv_id'),all.x = T)
+
+rm(B,B2,R,R2,dds_B,dds_R,group,res_B,res_R,table) #删除中间变量
+
+
+#4.添加黑土和红壤中是否一致性上调或下调的标记
+gd[BG_label=="up"&RG_label=='up',"G_consistency"] <- 'up'
+gd[BG_label=="down"&RG_label=='down',"G_consistency"] <- 'down'
+gd[BM_label=="up"&RM_label=='up',"M_consistency"] <- 'up'
+gd[BM_label=="down"&RM_label=='down',"M_consistency"] <- 'down'
+gd[BA_label=="up"&RA_label=='up',"A_consistency"] <- 'up'
+gd[BA_label=="down"&RA_label=='down',"A_consistency"] <- 'down'
+
+
+#5.添加物种信息、原始asv_id和序列，拆分黑土和红壤数据（根据生长速率的log2FC是否为NA），添加P0和P2处理的生长速率、死亡速率、丰度、相对丰度的平均值数据
+
+# asv_info <- read.delim("ASV_originID_tax.xls",check.names = F,stringsAsFactors = F)
+# asv_info$taxonomy <- gsub("[a-z]__","",asv_info$taxonomy)  #去除物种标签
+# asv_info <- tidyr::separate(asv_info,col = 3,into = c('kingdom','phylum','class','order','family','genus','species'),sep = ";")  #物种列分列
+# asv_info[which(str_detect(asv_info$genus,"uncultured")|is.na(asv_info$genus)),'genus'] <- 'unknown_genus' #修改未鉴定到属的属名
+# asv_info$tax_label <- paste(asv_info$asv_id,asv_info$genus)  #asv_id+属名作为建树时的文字标签
+# 
+# seqs <- read.delim("rep-seqs.fasta",header = F,check.names = F,stringsAsFactors = F) #读取rep-seqs
+# read_fasta <- function(seq){ #读取fasta格式文件，调整为两列
+#   seq3 <- data.frame(stringsAsFactors = FALSE)
+#   n<-0
+#   r <- nrow(seq)
+#   for (i in 1:r) {
+#     cat(i,"/",r,"\r")
+#     if (grepl(">",seq[i,1])) {
+#       n <- n+1
+#       seq3[n,'ID'] <- seq[i,1]
+#       seq3[n,'seq'] <- ''
+#     }else{
+#       seq3[n,'seq'] <- paste(seq3[n,'seq'],seq[i,1],sep = '')
+#     }
+#   }
+#   # seq3$seq <- gsub(' ','',seq3$seq)  #去除序列中的空格
+#   # seq3$ID <- str_extract(seq3$ID, "^>.+[.]{1}[:digit:]+") #只保留序列ID
+#   # seq3 <- seq3[which((!duplicated(seq3$ID))&(!duplicated(seq3$seq))),] #去除ID和seq重复
+#   return(seq3)
+# }
+# seqs <- read_fasta(seqs) #调整fasta格式为两列
+# seqs$ID <- gsub(">","",seqs$ID) #删除序列id前的>
+# 
+# asv_info <- merge(asv_info,seqs,by.x="origin_asv_name",by.y="ID",all.x=T) #asv_info添加序列
+# write.table(asv_info,"asv_info.xls",sep = '\t',quote = F,row.names = F)  #输出asv_info
+
+#读取已经准备好的ASV信息
+asv_info <- read.delim("asv_info.xls",check.names = F,stringsAsFactors = F)
+
+#gd结果添加asv信息
+gd <- merge(gd,asv_info,by='asv_id',all.x = T)  
+
+#拆分黑土和红壤数据（根据生长速率的log2FC是否为NA）
+B_gd <- copy(gd)  #复制gd，否则下一步会在gd变量上更改
+B_gd[,':='(RG_log2FC=NULL,RG_label=NULL,RM_log2FC=NULL,RM_label=NULL,RA_log2FC=NULL,RA_label=NULL)] #删除红壤数据列
+B_gd <- B_gd[!is.na(BG_log2FC),]  #只保留BG_log2FC不为NA的行
+R_gd <- copy(gd)  #复制gd，否则下一步会在gd变量上更改
+R_gd[,':='(BG_log2FC=NULL,BG_label=NULL,BM_log2FC=NULL,BM_label=NULL,BA_log2FC=NULL,BA_label=NULL)] #删除黑土数据列
+R_gd <- R_gd[!is.na(RG_log2FC),]  #只保留RG_log2FC不为NA的行
+
+#添加P0和P2处理的生长速率、死亡速率、丰度、相对丰度的平均值数据
+gd2 <- res$pop2[variable %in% c('growth','mortality'),] #重新读取生长死亡速率数据
+
+#为黑土数据添加生长、死亡速率
+B_gd <- merge(B_gd,gd2[soil=="B"&protist=="P0"&variable=="growth",c("asv_id","50%")],by='asv_id',all.x = T)
+setnames(B_gd,"50%","P0_G")
+B_gd <- merge(B_gd,gd2[soil=="B"&protist=="P2"&variable=="growth",c("asv_id","50%")],by='asv_id',all.x = T)
+setnames(B_gd,"50%","P2_G")
+B_gd <- merge(B_gd,gd2[soil=="B"&protist=="P0"&variable=="mortality",c("asv_id","50%")],by='asv_id',all.x = T)
+setnames(B_gd,"50%","P0_M")
+B_gd <- merge(B_gd,gd2[soil=="B"&protist=="P2"&variable=="mortality",c("asv_id","50%")],by='asv_id',all.x = T)
+setnames(B_gd,"50%","P2_M")
+
+#为红壤数据添加生长、死亡速率
+R_gd <- merge(R_gd,gd2[soil=="R"&protist=="P0"&variable=="growth",c("asv_id","50%")],by='asv_id',all.x = T)
+setnames(R_gd,"50%","P0_G")
+R_gd <- merge(R_gd,gd2[soil=="R"&protist=="P2"&variable=="growth",c("asv_id","50%")],by='asv_id',all.x = T)
+setnames(R_gd,"50%","P2_G")
+R_gd <- merge(R_gd,gd2[soil=="R"&protist=="P0"&variable=="mortality",c("asv_id","50%")],by='asv_id',all.x = T)
+setnames(R_gd,"50%","P0_M")
+R_gd <- merge(R_gd,gd2[soil=="R"&protist=="P2"&variable=="mortality",c("asv_id","50%")],by='asv_id',all.x = T)
+setnames(R_gd,"50%","P2_M")
+
+#重新读取table的丰度信息
+table <- res$table
+table <- table[,str_detect(names(table),"_")]  #提取数据列
+rel_table <- as.data.frame(t(t(table)/colSums(table)))  #转换为相对丰度表，由于矩阵除以向量时，以每行分别相除，所以先转置，除以样品总和，再转置回来
+
+#为黑土数据添加丰度和相对丰度
+B_gd <- merge(B_gd,data.frame(asv_id=row.names(table),P0_A=rowMeans(table[,str_detect(names(table),"B_P0")])),by='asv_id',all.x = T)  #data.frame中，asv_id用于merge合并，rowMeans为1个处理3个重复的平均值，同时指定了列名
+B_gd <- merge(B_gd,data.frame(asv_id=row.names(table),P2_A=rowMeans(table[,str_detect(names(table),"B_P2")])),by='asv_id',all.x = T)
+B_gd <- merge(B_gd,data.frame(asv_id=row.names(rel_table),P0_relA=rowMeans(rel_table[,str_detect(names(rel_table),"B_P0")])),by='asv_id',all.x = T)
+B_gd <- merge(B_gd,data.frame(asv_id=row.names(rel_table),P2_relA=rowMeans(rel_table[,str_detect(names(rel_table),"B_P2")])),by='asv_id',all.x = T)
+
+#为红壤数据添加丰度和相对丰度
+R_gd <- merge(R_gd,data.frame(asv_id=row.names(table),P0_A=rowMeans(table[,str_detect(names(table),"R_P0")])),by='asv_id',all.x = T)  #data.frame中，asv_id用于merge合并，rowMeans为1个处理3个重复的平均值，同时指定了列名
+R_gd <- merge(R_gd,data.frame(asv_id=row.names(table),P2_A=rowMeans(table[,str_detect(names(table),"R_P2")])),by='asv_id',all.x = T)
+R_gd <- merge(R_gd,data.frame(asv_id=row.names(rel_table),P0_relA=rowMeans(rel_table[,str_detect(names(rel_table),"R_P0")])),by='asv_id',all.x = T)
+R_gd <- merge(R_gd,data.frame(asv_id=row.names(rel_table),P2_relA=rowMeans(rel_table[,str_detect(names(rel_table),"R_P2")])),by='asv_id',all.x = T)
+
+#将NA替换为""
+B_gd[is.na(B_gd)] <- ""
+R_gd[is.na(R_gd)] <- ""
+
+
+#6.导出用于建树的序列和ASV建树信息
+
+#定义输出fasta格式的函数
+fasta_output <- function(seq){ #调整为fasta格式输出
+  row.names(seq) <- 1:nrow(seq)
+  fasta <- data.frame()
+  t<-1
+  for (i in 1:nrow(seq)) {
+    fasta[t,1] <- seq[i,1]
+    fasta[t+1,1] <- seq[i,2]
+    t <- t+2
+  }
+  return(fasta)
+}
+
+#导出黑土序列
+B_seqs <- B_gd[,c('asv_id','seq')]
+B_seqs$asv_id <- paste0(">",B_seqs$asv_id)
+B_seqs <- fasta_output(B_seqs)
+write.table(B_seqs,"B_seqs.fasta",sep = '\t',quote = F,row.names = F,col.names = F)  #输出用于建树的序列（fasta格式）
+
+#导出红壤序列
+R_seqs <- R_gd[,c('asv_id','seq')]
+R_seqs$asv_id <- paste0(">",R_seqs$asv_id)
+R_seqs <- fasta_output(R_seqs)
+write.table(R_seqs,"R_seqs.fasta",sep = '\t',quote = F,row.names = F,col.names = F)  #输出用于建树的序列（fasta格式）
+
+#导出P2处理下相对丰度（P2_relA）top200的序列
+B_gd <- B_gd[order(P2_relA,decreasing = T),]  #按P2_relA排序
+R_gd <- R_gd[order(P2_relA,decreasing = T),]  #按P2_relA排序
+
+#导出黑土序列
+B_seqs <- B_gd[1:200,c('asv_id','seq')]
+B_seqs$asv_id <- paste0(">",B_seqs$asv_id)
+B_seqs <- fasta_output(B_seqs)
+write.table(B_seqs,"B_seqs_relA_top200.fasta",sep = '\t',quote = F,row.names = F,col.names = F)  #输出用于建树的序列（fasta格式）
+
+#导出红壤序列
+R_seqs <- R_gd[1:200,c('asv_id','seq')]
+R_seqs$asv_id <- paste0(">",R_seqs$asv_id)
+R_seqs <- fasta_output(R_seqs)
+write.table(R_seqs,"R_seqs_relA_top200.fasta",sep = '\t',quote = F,row.names = F,col.names = F)  #输出用于建树的序列（fasta格式）
+
+#导出ASV建树信息
+write.table(B_gd,"B_qSIP_tree_data.xls",sep = '\t',quote = F,row.names = F)  #输出黑土建树信息
+write.table(R_gd,"R_qSIP_tree_data.xls",sep = '\t',quote = F,row.names = F)  #输出红壤建树信息
+
+
+# ====================================================
+#Qsip tree data prepared
