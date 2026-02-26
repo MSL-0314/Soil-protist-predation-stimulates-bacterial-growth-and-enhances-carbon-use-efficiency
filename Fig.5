@@ -1,0 +1,166 @@
+# ====================================================
+#circlize_function
+
+# Load taxonomy data, extract OTU/phylum information
+taxonomy <- read.delim('taxonomy.txt', sep = '\t', stringsAsFactors = FALSE)
+tax_phylum <- unique(taxonomy$phylum)
+taxonomy$phylum <- factor(taxonomy$phylum, levels = tax_phylum)
+all_otu <- taxonomy$OTU_ID
+taxonomy$OTU_ID <- factor(taxonomy$OTU_ID, levels = all_otu)
+
+# Load group data, extract sample/group information
+group <- read.delim('group.txt', sep = '\t', stringsAsFactors = FALSE)
+all_group <- unique(group$group_ID)
+group$group_ID <- factor(group$group_ID, levels = all_group)
+all_sample <- group$sample_ID
+
+# Load OTU table and merge with taxonomy
+otu_table <- read.delim('otu_table.txt', sep = '\t')
+otu_table <- merge(taxonomy, otu_table, by = 'OTU_ID')
+otu_table <- otu_table[order(otu_table$phylum, otu_table$OTU_ID), ]
+rownames(otu_table) <- otu_table$OTU_ID
+otu_table <- otu_table[all_sample]
+
+library(reshape2)
+
+# Prepare data for circular plot
+all_ID <- c(all_otu, all_sample)
+accum_otu <- rowSums(otu_table)
+accum_sample <- colSums(otu_table)
+all_ID_xlim <- cbind(rep(0, length(all_ID)), data.frame(c(accum_otu, accum_sample)))
+
+# Melt data for circular plot
+otu_table$otu_ID <- all_otu
+plot_data <- melt(otu_table, id = 'otu_ID')  # Using melt() from reshape2 package
+colnames(plot_data)[2] <- 'sample_ID'
+plot_data$otu_ID <- factor(plot_data$otu_ID, levels = all_otu)
+plot_data$sample_ID <- factor(plot_data$sample_ID, levels = all_sample)
+plot_data <- plot_data[order(plot_data$otu_ID, plot_data$sample_ID), ]
+plot_data <- plot_data[c(2, 1, 3, 3)]
+
+# Define color schemes
+color_otu <- c('#8DD3C7', '#FFFFB3', '#BEBADA', '#FB8072', '#80B1D3', '#FDB462', '#B3DE69', '#FCCDE5', '#BC80BD', '#CCEBC5', '#FFED6F', '#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00', '#FFFF33', '#A65628', '#F781BF', '#66C2A5')
+color_sample <- c('#6181BD', '#F34800', '#64A10E', '#FF00FF', '#c7475b', '#049a0b')
+color_phylum <- c('#BEAED4', '#FDC086', '#FFFF99', '#386CB0', '#F0027F')
+color_group <- c('#4253ff', '#ff4308')
+
+names(color_otu) <- all_otu
+names(color_sample) <- all_sample
+
+library(circlize)
+
+# Set circular plot parameters
+gap_size <- c(rep(3, length(all_otu) - 1), 6, rep(3, length(all_sample) - 1), 6)
+circos.par(cell.padding = c(0, 0, 0, 0), start.degree = 270, gap.degree = gap_size)
+circos.initialize(factors = factor(all_ID, levels = all_ID), xlim = all_ID_xlim)
+
+# Draw phylum and group highlights (first track)
+circos.trackPlotRegion(
+  ylim = c(0, 1), track.height = 0.03, bg.border = NA,
+  panel.fun = function(x, y) {
+    sector.index = get.cell.meta.data('sector.index')
+    xlim = get.cell.meta.data('xlim')
+    ylim = get.cell.meta.data('ylim')
+  } )
+
+for (i in 1:length(tax_phylum)) {
+  tax_OTU <- {subset(taxonomy, phylum == tax_phylum[i])}$OTU_ID
+  highlight.sector(tax_OTU, track.index = 1, col = color_phylum[i], text = tax_phylum[i], cex = 0.5, text.col = 'black', niceFacing = FALSE)
+}
+
+for (i in 1:length(all_group)) {
+  group_sample <- {subset(group, group_ID == all_group[i])}$sample_ID
+  highlight.sector(group_sample, track.index = 1, col = color_group[i], text = all_group[i], cex = 0.7, text.col = 'black', niceFacing = FALSE)
+}
+
+# Draw percentage annotations (second track)
+circos.trackPlotRegion(
+  ylim = c(0, 1), track.height = 0.05, bg.border = NA,
+  panel.fun = function(x, y) {
+    sector.index = get.cell.meta.data('sector.index')
+    xlim = get.cell.meta.data('xlim')
+    ylim = get.cell.meta.data('ylim')
+  } )
+
+circos.track(
+  track.index = 2, bg.border = NA,
+  panel.fun = function(x, y) {
+    xlim = get.cell.meta.data('xlim')
+    ylim = get.cell.meta.data('ylim')
+    sector.name = get.cell.meta.data('sector.index')
+    xplot = get.cell.meta.data('xplot')
+    
+    by = ifelse(abs(xplot[2] - xplot[1]) > 30, 0.25, 1)
+    for (p in c(0, seq(by, 1, by = by))) circos.text(p*(xlim[2] - xlim[1]) + xlim[1], mean(ylim) + 0.4, paste0(p*100, '%'), cex = 0.4, adj = c(0.5, 0), niceFacing = FALSE)
+    
+    circos.lines(xlim, c(mean(ylim), mean(ylim)), lty = 3)
+  } )
+
+# Draw OTU and sample sectors (third track)
+circos.trackPlotRegion(
+  ylim = c(0, 1), track.height = 0.03, bg.col = c(color_otu, color_sample), bg.border = NA, track.margin = c(0, 0.01),
+  panel.fun = function(x, y) {
+    xlim = get.cell.meta.data('xlim')
+    sector.name = get.cell.meta.data('sector.index')
+    circos.axis(h = 'top', labels.cex = 0.4, major.tick.percentage = 0.4, labels.niceFacing = FALSE)
+    circos.text(mean(xlim), 0.2, sector.name, cex = 0.4, niceFacing = FALSE, adj = c(0.5, 0))
+  } )
+
+# Draw empty track (fourth track)
+circos.trackPlotRegion(ylim = c(0, 1), track.height = 0.03, track.margin = c(0, 0.01))
+
+# Draw links between OTUs and samples (fifth track)
+for (i in seq_len(nrow(plot_data))) {
+  circos.link(
+    plot_data[i,2], c(accum_otu[plot_data[i,2]], accum_otu[plot_data[i,2]] - plot_data[i,4]),
+    plot_data[i,1], c(accum_sample[plot_data[i,1]], accum_sample[plot_data[i,1]] - plot_data[i,3]),
+    col = paste0(color_otu[plot_data[i,2]], '70'), border = NA )
+  
+  circos.rect(accum_otu[plot_data[i,2]], 0, accum_otu[plot_data[i,2]] - plot_data[i,4], 1, sector.index = plot_data[i,2], col = color_sample[plot_data[i,1]], border = NA)
+  circos.rect(accum_sample[plot_data[i,1]], 0, accum_sample[plot_data[i,1]] - plot_data[i,3], 1, sector.index = plot_data[i,1], col = color_otu[plot_data[i,2]], border = NA)
+  
+  accum_otu[plot_data[i,2]] = accum_otu[plot_data[i,2]] - plot_data[i,4]
+  accum_sample[plot_data[i,1]] = accum_sample[plot_data[i,1]] - plot_data[i,3]
+}
+
+# The following code has issues with plotting in circular layout
+
+library(ComplexHeatmap)  # Required for Legend function
+library(grid)  # Required for grid functions
+
+# Create legend for OTUs
+otu_legend <- Legend(
+  at = all_otu, labels = taxonomy$detail, labels_gp = gpar(fontsize = 8),
+  grid_height = unit(0.5, 'cm'), grid_width = unit(0.5, 'cm'), type = 'points', pch = NA, background = color_otu)
+
+pushViewport(viewport(x = 0.85, y = 0.5))
+grid.draw(otu_legend)
+upViewport()
+
+# Clear circular layout (currently cannot render in this layout)
+circos.clear()
+
+# Open PDF device with appropriate dimensions
+pdf('circlize_plot.pdf', width = 20, height = 15)
+circle_size = unit(1, 'snpc')
+
+# Re-draw the plot
+# Set layout parameters
+gap_size <- c(rep(3, length(all_otu) - 1), 6, rep(3, length(all_sample) - 1), 6)
+circos.par(cell.padding = c(0, 0, 0, 0), start.degree = 270, gap.degree = gap_size)
+circos.initialize(factors = factor(all_ID, levels = all_ID), xlim = all_ID_xlim)
+
+# Draw tracks (same as above)
+
+# Create legend
+otu_legend <- Legend(
+  at = all_otu, labels = taxonomy$detail, labels_gp = gpar(fontsize = 8),
+  grid_height = unit(0.5, 'cm'), grid_width = unit(0.5, 'cm'), type = 'points', pch = NA, background = color_otu)
+
+pushViewport(viewport(x = 0.85, y = 0.5))
+grid.draw(otu_legend)
+upViewport()
+
+# Clear layout and close PDF
+circos.clear()
+dev.off()
