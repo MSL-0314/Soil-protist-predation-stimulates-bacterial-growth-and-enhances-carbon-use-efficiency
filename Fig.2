@@ -1,0 +1,665 @@
+# ====================================================
+# Alpha Diversity Analysis
+
+# Load required packages
+library(picante)       # For phylogenetic diversity analysis
+library(vegan)         # For ecological diversity indices
+
+# Define alpha diversity calculation function
+alpha <- function(x, tree = NULL, base = exp(1)) {
+  # Calculate basic richness estimates
+  est <- estimateR(x)
+  
+  # Extract diversity indices
+  Richness <- est[1, ]
+  Chao1 <- est[2, ]
+  ACE <- est[4, ]
+  
+  # Calculate Shannon and Simpson indices
+  Shannon <- diversity(x, index = 'shannon', base = base)
+  Simpson <- diversity(x, index = 'simpson')    # Gini-Simpson index
+  
+  # Calculate Pielou's evenness
+  Pielou <- Shannon / log(Richness, base)
+  
+  # Calculate Goods coverage
+  goods_coverage <- 1 - rowSums(x == 1) / rowSums(x)
+  
+  # Combine results into a data frame
+  result <- data.frame(
+    Richness = Richness, 
+    Shannon = Shannon, 
+    Simpson = Simpson, 
+    Pielou = Pielou, 
+    Chao1 = Chao1, 
+    ACE = ACE, 
+    goods_coverage = goods_coverage
+  )
+  
+  # Add phylogenetic diversity if tree is provided
+  if (!is.null(tree)) {
+    PD_whole_tree <- pd(x, tree, include.root = FALSE)[, 1]
+    result$PD_whole_tree <- PD_whole_tree
+  }
+  
+  return(result)
+}
+
+# ====================================================
+# Main Analysis Section
+# ====================================================
+
+# Load OTU table and phylogenetic tree
+# Note: Update file paths according to your actual data location
+
+# Read OTU table
+# Expected format: rows are OTUs/ASVs, columns are samples
+otu <- read.delim('OTU_table_normalized.txt', 
+                  row.names = 1, 
+                  sep = '\t', 
+                  stringsAsFactors = FALSE, 
+                  check.names = FALSE)
+
+# Transpose to make rows as samples and columns as OTUs (required format)
+otu <- t(otu)
+
+# Check data structure
+cat("OTU table dimensions:", dim(otu), "\n")
+cat("Samples:", nrow(otu), "\n")
+cat("OTUs/ASVs:", ncol(otu), "\n")
+
+# Read phylogenetic tree (if available)
+# Note: Comment out if you don't have a phylogenetic tree
+tree <- read.tree('bacteria_rooted_tree.nwk')
+
+# ====================================================
+# Calculate Alpha Diversity Indices
+# ====================================================
+
+cat("Calculating alpha diversity indices...\n")
+
+# Option 1: Calculate without phylogenetic tree
+# Using log base 2 for Shannon index
+alpha_all <- alpha(otu, base = 2)
+
+# Option 2: Calculate with phylogenetic tree (uncomment if tree is available)
+# alpha_all <- alpha(otu, tree, base = 2)
+
+# Display results summary
+cat("\nAlpha Diversity Summary:\n")
+cat("=======================\n")
+print(summary(alpha_all))
+
+# Display first few rows
+cat("\nFirst 6 samples:\n")
+print(head(alpha_all))
+
+# ====================================================
+# Save Results
+# ====================================================
+
+# Save alpha diversity table
+output_file <- 'alpha_diversity_results.csv'
+write.csv(alpha_all, output_file, quote = FALSE)
+cat("\nResults saved to:", output_file, "\n")
+
+# Optional: Save in multiple formats
+# write.table(alpha_all, 'alpha_diversity_results.txt', sep = '\t', row.names = TRUE)
+# saveRDS(alpha_all, 'alpha_diversity_results.rds')
+
+# ====================================================
+# Visualization (Optional)
+# ====================================================
+
+# Create a simple visualization of alpha diversity indices
+if (require(ggplot2)) {
+  library(ggplot2)
+  library(tidyr)
+  
+  # Prepare data for visualization
+  alpha_long <- alpha_all %>%
+    mutate(Sample = rownames(alpha_all)) %>%
+    pivot_longer(cols = -Sample, names_to = "Index", values_to = "Value")
+  
+  # Create boxplot
+  p <- ggplot(alpha_long, aes(x = Index, y = Value, fill = Index)) +
+    geom_boxplot(alpha = 0.7) +
+    labs(title = "Alpha Diversity Indices Distribution",
+         x = "Diversity Index",
+         y = "Value") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "none")
+  
+  # Save plot
+  ggsave("alpha_diversity_boxplot.pdf", p, width = 10, height = 6)
+  cat("Visualization saved: alpha_diversity_boxplot.pdf\n")
+}
+
+
+# ====================================================
+# PcoA Analysis
+library(vegan)
+library(ggplot2)
+library(ade4)
+
+#读取已经准备好的距离矩阵文件，如 Bray-curtis 距离，排序
+dis <- read.delim('bray_curtis_distance_matrix_D1.txt', row.names = 1, sep = '\t', stringsAsFactors = FALSE, check.names = FALSE)
+bray_dis <- as.dist(dis)	#转为 dist 数据类型
+
+#负值校正
+is.euclid(bray_dis)  #判断是否为欧式距离，显示为否则运行矫正，若是则运行排序 
+bray_dis_sqrt <- sqrt(bray_dis)      #平方根转化
+is.euclid(bray_dis_sqrt)  #判断是否为欧式距离，显示为是
+
+#PCoA 函数中本身也提供了校正参数（add），避免负特征值的产生
+#Cailliez 校正
+#pcoa <- cmdscale(bray_dis, k = (nrow(otu) - 1), eig = TRUE, add = TRUE)
+
+#PCoA 排序，详情 ?cmdscale
+pcoa <- cmdscale(bray_dis, k = (nrow(dis) - 1), eig = TRUE)
+
+#各 PCoA 轴的特征值
+pcoa_eig <- pcoa$eig
+#先评估下负特征值（末尾几个轴）
+barplot(pcoa_eig)
+
+#如果负特征值影响甚微，则继续
+#如果负特征值非常明显，则应当先校正
+#各 PCoA 轴的解释量
+pcoa_exp <- pcoa$eig/sum(pcoa$eig)
+#前 4 轴解释量
+pcoa1 <- paste('PCoA axis1 :', round(100*pcoa_exp[1], 2), '%')
+pcoa2 <- paste('PCoA axis2 :', round(100*pcoa_exp[2], 2), '%')
+pcoa3 <- paste('PCoA axis3 :', round(100*pcoa_exp[3], 2), '%')
+pcoa4 <- paste('PCoA axis4 :', round(100*pcoa_exp[4], 2), '%')
+
+#添加分组信息 方法2
+site <- data.frame(pcoa$point)[1:2]
+site$name <- rownames(site)
+group <- read.table("group_D1.txt",sep = "\t",header = T,row.names = 1)
+group$name <- rownames(group)
+nmds_dis_site <- merge(site,group,by='name')
+nmds_dis_site$soil <- factor(nmds_dis_site$soil)
+write.table(nmds_dis_site,file = 'Pcoa_D1.xls',sep = '\t',row.names = F)
+
+#作图1 黑土_定殖后
+#size点大小，stroke点边框粗细,panel.grid.minor=element_blank()不加参数边框有白色间隔
+p <- ggplot(data = nmds_dis_site, aes(X1, X2)) +
+  geom_point(aes(color = soil, shape = protist),size= 4) +
+  #scale_color_brewer(palette='Set1') +
+  scale_color_manual(values = c("#3877AE","#A31F24"),limits = c('B','R'))+
+  scale_shape_manual(values = c(15,19),limits = c('P0','P2'))+
+  theme(panel.grid.major = element_blank(),panel.grid.minor=element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'), 
+        plot.title = element_text(size=15,hjust = 0.5),axis.title.y = element_text(size=15),axis.title.x = element_text(size=15),axis.text.x = element_text(size=15,vjust = 0.5,hjust = 0.5),axis.text.y = element_text(size=15,vjust = 0.5,hjust = 0.5),legend.text = element_text(size=12),strip.text.x = element_text(size=12)) +
+  labs(x = pcoa1, y = pcoa2, title = ' Black soil_PCoA_P2_weighted-unifrac_distance') +
+  stat_ellipse(aes(color = soil), geom = 'polygon', level = 0.95, alpha = 0, show.legend = FALSE,linetype = 2)
+
+p 
+ggsave(file="D1.pdf", width=9, height=8)
+
+
+#作图2  红壤_定殖后
+#size点大小，stroke点边框粗细,panel.grid.minor=element_blank()不加参数边框有白色间隔
+p <- ggplot(data = nmds_dis_site, aes(X1, X2)) +
+  geom_point(aes(color = protist, shape = bacterial),size= 2) +
+  #scale_color_brewer(palette='Set1') +
+  scale_color_manual(values = c('#9DC55C','#D46115'),limits = c('P0','P2'))+
+  scale_shape_manual(values = c(15,17,19),limits = c('D1','D2','D3'))+
+  theme(panel.grid.major = element_blank(),panel.grid.minor=element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'), 
+        plot.title = element_text(size=15,hjust = 0.5),axis.title.y = element_text(size=15),axis.title.x = element_text(size=15),axis.text.x = element_text(size=15,vjust = 0.5,hjust = 0.5),axis.text.y = element_text(size=15,vjust = 0.5,hjust = 0.5),legend.text = element_text(size=12),strip.text.x = element_text(size=12)) +
+  labs(x = pcoa1, y = pcoa2, title = 'Red soil_PCoA_P2_weighted-unifrac_distance') +
+  stat_ellipse(aes(color = protist), geom = 'polygon', level = 0.95, alpha = 0, show.legend = FALSE,linetype = 2)
+
+p 
+#调整坐标轴范围
+p + coord_cartesian(xlim = c(-0.23, 0.23),ylim = c(-0.23,0.23))
+#5.5X8 iches
+
+#作图2
+#size点大小，stroke点边框粗细
+p1 <- ggplot(data = nmds_dis_site, aes(X1, X2)) +
+  geom_point(aes(color = treatment),size= 2) +
+  #scale_color_brewer(palette='Paired') +
+  scale_color_manual(values = c('#9DC55C','#6AADDF','#8B7AB0','#F5B41F','#E37831'),limits = c('S','R'))+
+  theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'), 
+        plot.title = element_text(hjust = 0.5)) +
+  labs(x = pcoa1, y = pcoa2, title = 'Bacteria Black Soil Bray-Curtis PCoA') +
+  stat_ellipse(aes(color = treatment), geom = 'polygon', level = 0.95, alpha = 0, show.legend = FALSE,linetype = 2)
+
+p1 
+
+#调整坐标轴范围
+p1 + coord_cartesian(xlim = c(-0.27, 0.28),ylim = c(-0.27,0.2))
+
+
+#作图3
+#size点大小，stroke点边框粗细
+p <- ggplot(data = nmds_dis_site, aes(X1, X2)) +
+  geom_point(aes(color = treatment, shape = soil.time,size=0.15,stroke = 1.35)) +
+  scale_color_brewer(palette='Set3') +
+  scale_shape_manual(values = c(3,15,16,17,18,4,22,21,24,23),limits = c('B0', 'B7', 'B14','B28','B56','R0', 'R7', 'R14','R28','R56'))+
+  theme(panel.grid.major = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'), 
+        plot.title = element_text(hjust = 0.5)) +
+  labs(x = pcoa1, y = pcoa2, title = 'Protist Weighted Unifrac PcoA') 
+p 
+#调整坐标轴范围
+p + coord_cartesian(ylim = c(-0.11, 0.29),xlim = c(-0.32, 0.33))
+
+
+
+#作图1  土壤合并作图
+#size点大小，stroke点边框粗细,panel.grid.minor=element_blank()不加参数边框有白色间隔
+p <- ggplot(data = nmds_dis_site, aes(X1, X2)) +
+  geom_point(aes(color = soil, shape = protist),size= 2) +
+  #scale_color_brewer(palette='Set1') +
+  scale_color_manual(values = c("#00BCC2","#F8766D"))+
+  #scale_shape_manual(values = c(17,21,19,22,15),limits = c('0', '7', '14','28','56'))+
+  theme(panel.grid.major = element_blank(),panel.grid.minor=element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'), 
+        plot.title = element_text(hjust = 0.5)) +
+  labs(x = pcoa1, y = pcoa2, title = ' PCoA') +
+  stat_ellipse(aes(color = soil), geom = 'polygon', level = 0.95, alpha = 0, show.legend = FALSE,linetype = 2)
+
+p 
+
+
+
+# ====================================================
+# Richness calculate Analysis
+
+#直接呈现具体数值
+# ===== Packages =====
+# install.packages(c("tidyverse","patchwork"))
+library(tidyverse)
+library(patchwork)
+
+# ===== Read data =====
+infile <- "richness_growth calculate.csv"   # 替换为你的文件
+df <- read.csv(infile, check.names = FALSE, stringsAsFactors = FALSE)
+if ("phylum" %in% names(df)) df <- dplyr::rename(df, Phylum = phylum)
+
+# 固定 y 轴顺序（按原表行序）
+phylum_levels <- df$Phylum
+fix_phylum_order <- function(d) d %>% mutate(Phylum = factor(Phylum, levels = phylum_levels))
+
+# ===== Long format (soil / treatment / replicate) =====
+long <- df %>%
+  pivot_longer(cols = setdiff(names(df), "Phylum"),
+               names_to = "cond", values_to = "value") %>%
+  mutate(
+    soil  = substr(cond, 1, 1),                          # B / R
+    treat = stringr::str_extract(cond, "P0|P2"),         # P0 / P2
+    rep   = stringr::str_replace(cond, "^[BR]_D1_P[02]_", "")
+  ) %>%
+  mutate(value = as.numeric(value)) %>%
+  filter(treat %in% c("P0","P2")) %>%
+  fix_phylum_order()
+
+# ===== Stats by Phylum x Soil =====
+# 误差棒：±SE(diff)，其中 SE(diff) = sqrt(sd(P2)^2/n2 + sd(P0)^2/n0)
+# 显著性：Welch t-test（两独立组）
+compute_stats <- function(d){
+  x0 <- d$value[d$treat == "P0"]; n0 <- sum(!is.na(x0)); m0 <- mean(x0, na.rm = TRUE); s0 <- sd(x0, na.rm = TRUE)
+  x2 <- d$value[d$treat == "P2"]; n2 <- sum(!is.na(x2)); m2 <- mean(x2, na.rm = TRUE); s2 <- sd(x2, na.rm = TRUE)
+  
+  diff   <- m2 - m0
+  se_diff <- if (n0 >= 2 || n2 >= 2) sqrt((s0^2)/pmax(n0,1) + (s2^2)/pmax(n2,1)) else NA_real_
+  
+  pval <- NA_real_
+  if (n0 >= 2 && n2 >= 2) {
+    tt <- tryCatch(t.test(x2, x0, var.equal = FALSE), error = function(e) NULL)
+    if (!is.null(tt)) pval <- tt$p.value
+  }
+  
+  tibble(mean_P0 = m0, mean_P2 = m2, diff = diff,
+         se = se_diff, xmin = diff - se_diff, xmax = diff + se_diff,
+         p_value = pval)
+}
+
+stats <- long %>%
+  group_by(Phylum, soil) %>%
+  group_modify(~compute_stats(.x)) %>%
+  ungroup() %>%
+  fix_phylum_order() %>%
+  mutate(sig = case_when(
+    is.na(p_value)        ~ "",         # 不显著与缺失都不标
+    p_value <= 0.001      ~ "***",
+    p_value <= 0.01       ~ "**",
+    p_value <= 0.05       ~ "*",
+    TRUE                  ~ ""
+  ))
+
+write.csv(stats %>% mutate(Phylum = as.character(Phylum)),
+          "ttest_by_phylum_soil_SE.csv", row.names = FALSE)
+
+# ===== Plotting (point = mean(P2)-mean(P0); errorbar = ±SE) =====
+plot_one <- function(d, soil_title, fill_color){
+  # 星号放在误差棒外侧；若 SE 缺失/为0，则贴在点旁边
+  pad <- 0.02 * diff(range(c(d$xmin, d$xmax, d$diff), na.rm = TRUE))
+  d <- d %>%
+    mutate(
+      x_for_star = ifelse(is.na(se) | se == 0, diff,
+                          ifelse(diff >= 0, xmax, xmin)),
+      x_for_star = x_for_star + ifelse(diff >= 0, pad, -pad)
+    )
+  
+  ggplot(d, aes(y = Phylum)) +
+    geom_vline(xintercept = 0, linewidth = 1.2, colour = "#C69C3B") +
+    geom_errorbarh(aes(xmin = xmin, xmax = xmax),
+                   height = 0.2, linewidth = 0.6, colour = "grey35", na.rm = TRUE) +
+    geom_point(aes(x = diff), size = 3.6, shape = 21,
+               fill = fill_color, colour = "black", alpha = 0.95) +
+    geom_text(data = subset(d, sig != ""),  # 只画显著的
+              aes(x = x_for_star, label = sig),
+              size = 3.2, fontface = "bold") +
+    scale_y_discrete(limits = phylum_levels, drop = FALSE) +
+    labs(title = soil_title,
+         x = "Change in growing ASV richness (P2 − P0)",
+         y = "Phylum\n(error bars = ±SE of difference)") +
+    theme_classic(base_size = 12) +
+    theme(axis.title.y = element_text(margin = margin(r = 10)),
+          axis.title.x = element_text(margin = margin(t = 10)))
+}
+
+p_B <- stats %>% filter(soil == "B") %>% plot_one("Soil B", "#6B3F1F")
+p_R <- stats %>% filter(soil == "R") %>% plot_one("Soil R", "#E0C89A")
+
+# 展示
+print(p_B); print(p_R)
+
+# ===== Save PDFs =====
+ggsave("ASV_change_soil_B_SE.pdf", p_B, width = 6.5, height = 6, device = "pdf")
+ggsave("ASV_change_soil_R_SE.pdf", p_R, width = 6.5, height = 6, device = "pdf")
+
+combo <- p_B + p_R + plot_layout(ncol = 2)
+ggsave("ASV_change_B_R_side_by_side_SE.pdf", combo, width = 13, height = 6, device = "pdf")
+
+
+
+# 计算增长比例
+library(tidyverse)
+library(patchwork)
+
+# ===== Read data =====
+infile <- "richness_growth calculate.csv"   # 替换为你的文件
+df <- read.csv(infile, check.names = FALSE, stringsAsFactors = FALSE)
+if ("phylum" %in% names(df)) df <- dplyr::rename(df, Phylum = phylum)
+
+# 按原表行序固定 y 轴
+phylum_levels <- df$Phylum
+fix_phylum_order <- function(d) d %>% mutate(Phylum = factor(Phylum, levels = phylum_levels))
+
+# ===== Long format =====
+long <- df %>%
+  pivot_longer(cols = setdiff(names(df), "Phylum"),
+               names_to = "cond", values_to = "value") %>%
+  mutate(
+    soil  = substr(cond, 1, 1),                    # B / R
+    treat = stringr::str_extract(cond, "P0|P2")    # P0 / P2
+  ) %>%
+  mutate(value = as.numeric(value)) %>%
+  filter(treat %in% c("P0","P2")) %>%
+  fix_phylum_order()
+
+# ===== Stats: percent change + ±SE(%) ; Welch t-test for p =====
+# 如果 P0 的均值为 0，百分比无法计算；默认给 NA。
+# 如需避免 NA，可把 eps 改为一个小值（例如 1），即 denominator = max(mean(P0), eps)
+eps <- 0
+
+compute_stats <- function(d){
+  x0 <- d$value[d$treat == "P0"]; n0 <- sum(!is.na(x0)); m0 <- mean(x0, na.rm = TRUE); s0 <- sd(x0, na.rm = TRUE)
+  x2 <- d$value[d$treat == "P2"]; n2 <- sum(!is.na(x2)); m2 <- mean(x2, na.rm = TRUE); s2 <- sd(x2, na.rm = TRUE)
+  
+  diff     <- m2 - m0
+  se_diff  <- if (n0 >= 2 || n2 >= 2) sqrt((s0^2)/pmax(n0,1) + (s2^2)/pmax(n2,1)) else NA_real_
+  
+  # 百分比（相对 P0 的均值）
+  denom    <- if (m0 > 0 || eps > 0) max(m0, eps) else NA_real_
+  diff_pct <- 100 * diff / denom
+  se_pct   <- 100 * se_diff / denom
+  xmin     <- diff_pct - se_pct
+  xmax     <- diff_pct + se_pct
+  
+  # Welch t-test（显著性与是否用百分比无关，仍基于原始数值）
+  pval <- NA_real_
+  if (n0 >= 2 && n2 >= 2) {
+    tt <- tryCatch(t.test(x2, x0, var.equal = FALSE), error = function(e) NULL)
+    if (!is.null(tt)) pval <- tt$p.value
+  }
+  
+  tibble(mean_P0 = m0, mean_P2 = m2,
+         diff_pct = diff_pct, se_pct = se_pct, xmin = xmin, xmax = xmax,
+         p_value = pval)
+}
+
+stats <- long %>%
+  group_by(Phylum, soil) %>%
+  group_modify(~compute_stats(.x)) %>%
+  ungroup() %>%
+  fix_phylum_order() %>%
+  mutate(sig = case_when(
+    is.na(p_value)        ~ "",
+    p_value <= 0.001      ~ "***",
+    p_value <= 0.01       ~ "**",
+    p_value <= 0.05       ~ "*",
+    TRUE                  ~ ""
+  ))
+
+write.csv(stats %>% mutate(Phylum = as.character(Phylum)),
+          "ttest_by_phylum_soil_percent_SE.csv", row.names = FALSE)
+
+# ===== Plotting (point = % change; errorbar = ±SE%) =====
+plot_one <- function(d, soil_title, fill_color){
+  # 星号放在误差棒外侧；若 SE 缺失/为0，则贴在点旁
+  pad <- 0.02 * diff(range(c(d$xmin, d$xmax, d$diff_pct), na.rm = TRUE))
+  d <- d %>%
+    mutate(
+      x_for_star = ifelse(is.na(se_pct) | se_pct == 0, diff_pct,
+                          ifelse(diff_pct >= 0, xmax, xmin)),
+      x_for_star = x_for_star + ifelse(diff_pct >= 0, pad, -pad)
+    )
+  
+  ggplot(d, aes(y = Phylum)) +
+    geom_vline(xintercept = 0, linewidth = 1.2, colour = "#C69C3B") +
+    geom_errorbarh(aes(xmin = xmin, xmax = xmax),
+                   height = 0.2, linewidth = 0.6, colour = "grey35", na.rm = TRUE) +
+    geom_point(aes(x = diff_pct), size = 3.6, shape = 21,
+               fill = fill_color, colour = "black", alpha = 0.95) +
+    geom_text(data = subset(d, sig != ""),  # 只标显著
+              aes(x = x_for_star, label = sig),
+              size = 3.2, fontface = "bold") +
+    scale_y_discrete(limits = phylum_levels, drop = FALSE) +
+    scale_x_continuous(labels = function(x) paste0(x, "%")) +
+    labs(title = soil_title,
+         x = "Percent change in growing ASV richness (relative to P0)",
+         y = "Phylum\n(error bars = ±SE of percent change)") +
+    theme_classic(base_size = 12) +
+    theme(axis.title.y = element_text(margin = margin(r = 10)),
+          axis.title.x = element_text(margin = margin(t = 10)))
+}
+
+p_B <- stats %>% filter(soil == "B") %>% plot_one("Soil B", "#6B3F1F")
+p_R <- stats %>% filter(soil == "R") %>% plot_one("Soil R", "#E0C89A")
+
+# 展示
+print(p_B); print(p_R)
+
+# ===== Save PDFs =====
+ggsave("ASV_percent_change_soil_B_SE.pdf", p_B, width = 6.5, height = 6, device = "pdf")
+ggsave("ASV_percent_change_soil_R_SE.pdf", p_R, width = 6.5, height = 6, device = "pdf")
+
+combo <- p_B + p_R + plot_layout(ncol = 2)
+ggsave("ASV_percent_change_B_R.pdf", combo, width = 13, height = 6, device = "pdf")
+
+
+# ===== 在“绝对差 (P2 − P0)”那一段的 stats 计算完成后，新增这一段 =====
+# 确保 soil 是按 B, R 的顺序
+stats <- stats %>% mutate(soil = factor(soil, levels = c("B","R")))
+
+plot_combined_diff <- function(d){
+  # 为星号计算摆放位置（仍然放在误差棒外侧；SE 缺失/为 0 时贴点）
+  pad <- 0.02 * diff(range(c(d$xmin, d$xmax, d$diff), na.rm = TRUE))
+  d <- d %>%
+    mutate(
+      x_for_star = ifelse(is.na(se) | se == 0, diff,
+                          ifelse(diff >= 0, xmax, xmin)),
+      x_for_star = x_for_star + ifelse(diff >= 0, pad, -pad)
+    )
+  
+  pd <- position_dodge(width = 0.55)  # 按 soil 在 y 方向并排
+  
+  ggplot(d, aes(y = Phylum, group = soil)) +
+    geom_vline(xintercept = 0, linewidth = 1.2, colour = "#C69C3B") +
+    geom_errorbarh(aes(xmin = xmin, xmax = xmax, colour = soil),
+                   height = 0.2, linewidth = 0.6, position = pd, na.rm = TRUE) +
+    geom_point(aes(x = diff, fill = soil),
+               size = 3.6, shape = 21, colour = "black", alpha = 0.95,
+               position = pd) +
+    geom_text(data = subset(d, sig != ""),
+              aes(x = x_for_star, label = sig, colour = soil),
+              size = 3.2, fontface = "bold", position = pd) +
+    scale_y_discrete(limits = phylum_levels, drop = FALSE) +
+    scale_colour_manual(values = c(B = "#6B3F1F", R = "#E0C89A"), name = "Soil") +
+    scale_fill_manual(values   = c(B = "#6B3F1F", R = "#E0C89A"), name = "Soil") +
+    labs(
+      title = "Soil B & R (combined)",
+      x = "Change in growing ASV richness (P2 − P0)",
+      y = "Phylum\n(error bars = ±SE of difference)"
+    ) +
+    theme_classic(base_size = 12) +
+    theme(
+      legend.position = "right",
+      axis.title.y = element_text(margin = margin(r = 10)),
+      axis.title.x = element_text(margin = margin(t = 10))
+    )
+}
+
+# 生成与保存
+p_combined_diff <- plot_combined_diff(stats)
+print(p_combined_diff)
+ggsave("ASV_change_B_R_combined_SE.pdf", p_combined_diff, width = 7.5, height = 6, device = "pdf")
+
+
+
+
+# ====================================================
+# T-test significance Analysis
+library(reshape2)
+library(ggplot2)
+library(cowplot)
+library(showtext)
+
+# 读取数据和分组合并
+alpha <- read.delim('richness.txt', header=T, row.names = 1, stringsAsFactors = FALSE, check.names = F)
+alpha$sample_id <- row.names(alpha)
+groupB <- read.delim('group_B_P2.txt', header=T, stringsAsFactors = FALSE, check.names = F)
+groupR <- read.delim('group_R_P2.txt', header=T, stringsAsFactors = FALSE, check.names = F)
+group <- rbind(groupB, groupR)
+
+data <- merge(alpha, group, by = "sample_id")
+
+# 初始化结果数据框，明确列名
+result <- data.frame(
+  soil = character(),
+  bacterial = character(),
+  p = numeric(),
+  p0_mean = numeric(),
+  p2_mean = numeric(),
+  mean_diff = numeric(),
+  t_value = numeric(),
+  label = character(),
+  stringsAsFactors = FALSE
+)
+
+n = 0
+
+# 同时处理B和R两种土壤
+for (s in c("B", "R")) {
+  for (t in unique(data$bacterial)) {
+    n = n + 1
+    data2 <- subset(data, soil == s & bacterial == t)
+    
+    # 检查protist是否有且只有两个水平
+    protist_levels <- unique(data2$protist)
+    if (length(protist_levels) != 2) {
+      result[n, "soil"] <- s
+      result[n, "bacterial"] <- t
+      result[n, "p"] <- NA
+      result[n, "p0_mean"] <- NA
+      result[n, "p2_mean"] <- NA
+      result[n, "mean_diff"] <- NA
+      result[n, "t_value"] <- NA
+      result[n, "label"] <- paste("分组数=", length(protist_levels), sep="")
+      next
+    }
+    
+    # 检查每组样本量是否足够
+    sample_counts <- table(data2$protist)
+    if (any(sample_counts < 2)) {
+      result[n, "soil"] <- s
+      result[n, "bacterial"] <- t
+      result[n, "p"] <- NA
+      result[n, "p0_mean"] <- NA
+      result[n, "p2_mean"] <- NA
+      result[n, "mean_diff"] <- NA
+      result[n, "t_value"] <- NA
+      result[n, "label"] <- "样本量不足"
+      next
+    }
+    
+    # 进行t检验
+    t_test <- t.test(richness ~ protist, data = data2)
+    p <- t_test$p.value
+    
+    # 计算均值差异等信息
+    p0_mean <- mean(data2$richness[data2$protist == "P0"], na.rm = TRUE)
+    p2_mean <- mean(data2$richness[data2$protist == "P2"], na.rm = TRUE)
+    mean_diff <- p0_mean - p2_mean
+    
+    result[n, "soil"] <- s
+    result[n, "bacterial"] <- t
+    result[n, "p"] <- p
+    result[n, "p0_mean"] <- p0_mean
+    result[n, "p2_mean"] <- p2_mean
+    result[n, "mean_diff"] <- mean_diff
+    result[n, "t_value"] <- t_test$statistic
+    
+    if (p < 0.001) { 
+      result[n, "label"] <- "***"
+    } else if (p < 0.01) {
+      result[n, "label"] <- "**"
+    } else if (p < 0.05) {
+      result[n, "label"] <- "*"
+    } else {
+      result[n, "label"] <- "ns"
+    }
+  }
+}
+
+# 查看结果
+print("eveness的t检验结果:")
+print(result)
+
+# 保存结果
+write.csv(result, "eveness.csv", row.names = F, quote = F)
+
+# 输出显著性总结
+cat("\n=== 显著性总结 ===\n")
+for (s in c("B", "R")) {
+  cat("\n土壤类型:", s, "\n")
+  for (t in c("D1", "D2", "D3")) {
+    subset_result <- result[result$soil == s & result$bacterial == t, ]
+    if (nrow(subset_result) > 0) {
+      cat(t, ": P0 vs P2", subset_result$label, 
+          "(p =", format(subset_result$p, scientific = TRUE, digits = 3), 
+          ", diff =", round(subset_result$mean_diff, 4), ")\n")
+    }
+  }
+}
+
+# 分别查看两种土壤的结果
+cat("\n=== 黑壤(B)结果 ===\n")
+print(result[result$soil == "B", ])
+
+cat("\n=== 红壤(R)结果 ===\n")
+print(result[result$soil == "R", ])
