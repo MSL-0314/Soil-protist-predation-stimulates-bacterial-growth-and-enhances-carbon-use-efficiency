@@ -1,5 +1,5 @@
 # ====================================================
-#Growth_mortality_barplot Analysis
+# Growth_mortality_barplot Analysis
 
 library(ggplot2)
 library(data.table)
@@ -9,38 +9,38 @@ library(RColorBrewer)
 library(scales)
 library(ggprism)
 
-# 读取数据
+# Read data
 load("qSIP_res_freeze_total_corrected √.rdata")
 
-# 提取数据
+# Extract data
 pop <- res$pop
-pop[mortality>0,"mortality"] <- 0 #死亡速率为正值的数值设为0
+pop[mortality>0,"mortality"] <- 0 # Set positive mortality rates to 0
 tax_lev <- "Class"
 
-# 合并每个处理门水平的生长和死亡速率，每个处理有3个重复，所以除以3
-pop <- pop[!is.na(pop[[tax_lev]]), .(Growth=sum(growth)/3,Mortality=sum(mortality)/3),by=c("soil","protist",tax_lev)]
+# Merge growth and mortality rates at Class level for each treatment, each treatment has 3 replicates, so divide by 3
+pop <- pop[!is.na(pop[[tax_lev]]), .(Growth=sum(growth)/3, Mortality=sum(mortality)/3), by=c("soil","protist",tax_lev)]
 
-# 根据生长速率对物种排序
-tax <- pop[,.(growth=sum(Growth)),by=tax_lev]
-tax <- tax[order(tax$growth,decreasing = T),]
-tax[[tax_lev]] <- gsub("^\\w__","",tax[[tax_lev]])
+# Sort taxa by growth rate
+tax <- pop[,.(growth=sum(Growth)), by=tax_lev]
+tax <- tax[order(tax$growth, decreasing = T),]
+tax[[tax_lev]] <- gsub("^\\w__","", tax[[tax_lev]])
 
-# 调整格式
-data <- melt(pop,id.vars = c("soil","protist",tax_lev))
-data$sub <- paste(data$soil,data$protist,sep = "_")
-data$sub <- factor(data$sub,levels = c("B_P0","B_P2","R_P0","R_P2"))
-data[[tax_lev]] <- gsub("^\\w__","",data[[tax_lev]])
-data[[tax_lev]] <- factor(data[[tax_lev]],levels = tax[[tax_lev]])
+# Format data
+data <- melt(pop, id.vars = c("soil","protist",tax_lev))
+data$sub <- paste(data$soil, data$protist, sep = "_")
+data$sub <- factor(data$sub, levels = c("B_P0","B_P2","R_P0","R_P2"))
+data[[tax_lev]] <- gsub("^\\w__","", data[[tax_lev]])
+data[[tax_lev]] <- factor(data[[tax_lev]], levels = tax[[tax_lev]])
 names(data)[names(data)==tax_lev] <- "tax"
 
-# 作图
-set.seed(333) # Phylum用321，Class用333
+# Plot
+set.seed(333) # Phylum use 321, Class use 333
 
 p <- ggplot(data, aes(sub, value, fill = tax)) + 
-  geom_col(position = 'stack', width = 0.8) + #调整柱子粗细
+  geom_col(position = 'stack', width = 0.8) + # Adjust bar thickness
   facet_wrap(~variable, scales = 'free') +
   scale_fill_manual(values = c('#3877ae', '#f7c639', '#d2e6b7','#be354b', '#2D7B31', '#fabed4', '#2D3E8F', '#42A6DC', '#ffd8b1', '#B56539', '#c57bb0', '#E57F0E', '#8CC8AB', '#E65997', '#D11218', '#6D0555', '#df6045', '#EFE41B', '#591411', '#BBF9F6', '#7FB174', '#F0E68C', '#A3C1AD', '#E0B0FF', '#8B4513', '#FFC0CB', '#6A5ACD', '#708090', '#FFD700', '#4682B4', '#FF6347', '#48D1CC', '#FF69B4', '#9400D3', '#FF1493', '#00BFFF', '#FF4500', '#32CD32', '#FF8C00', '#20B2AA', '#87CEFA', '#778899', '#B0E0E6', '#FFA07A', '#40E0D0', '#FFDAB9', '#CD5C5C'))+
-  labs(x = "Treatment", y = '16S rRNA gene copies/day') + #修改横纵坐标名
+  labs(x = "Treatment", y = '16S rRNA gene copies/day') + # Modify axis labels
   theme_prism()+
   theme(axis.title = element_text(size=12.5),
         axis.text = element_text(size=11.5),
@@ -48,43 +48,43 @@ p <- ggplot(data, aes(sub, value, fill = tax)) +
   )
 p
 
-ggsave(p,filename = "growth_mortality_class.pdf",width = 12,height = 6)
-# ggsave(p,filename = "growth_mortality_class_barplot.pdf",width = 15,height = 7)
+ggsave(p, filename = "growth_mortality_class.pdf", width = 12, height = 6)
+# ggsave(p, filename = "growth_mortality_class_barplot.pdf", width = 15, height = 7)
 
 # ====================================================
-#Heatmap circle plot analysis
+# Heatmap circle plot analysis
 
-#黑土红壤分开，按显著性排序，取TOP50的family
-# install.packages(c("tidyverse","patchwork","scales"))  # 如未安装
+# Separate black soil and red soil, sort by significance, take TOP50 families
+# install.packages(c("tidyverse","patchwork","scales"))  # If not installed
 library(tidyverse)
 library(patchwork)
 library(scales)
 
-# -------- 文件路径 & 输出 --------
+# -------- File paths & output --------
 file_p0 <- "R_D1_P0_2.txt"
 file_p2 <- "R_D1_P2_2.txt"
 out_pdf <- "heatmap_Family_Top50_by_significance.pdf"
 
-# -------- 读入 --------
+# -------- Read data --------
 p0 <- readr::read_tsv(file_p0, show_col_types = FALSE)
 p2 <- readr::read_tsv(file_p2, show_col_types = FALSE)
 
-# 标准化 asv_id
+# Standardize asv_id
 if (!"asv_id" %in% names(p0)) names(p0)[1] <- "asv_id"
 if (!"asv_id" %in% names(p2)) names(p2)[1] <- "asv_id"
 
-# 必需的分类学列（至少 Phylum 与 Family）
+# Required taxonomic columns (at least Phylum and Family)
 tax_cols <- c("Phylum","Class","Order","Family","Genus","Species")
 tax_cols <- tax_cols[tax_cols %in% names(p0)]
 stopifnot(all(c("Phylum","Family") %in% tax_cols))
 
-# 识别重复列（优先严格 P0_#/P2_#，否则任意包含 P0/P2）
+# Identify replicate columns (prefer strict P0_#/P2_#, otherwise any containing P0/P2)
 rep_cols_p0 <- grep("P0_\\d+$", names(p0), value = TRUE); if (length(rep_cols_p0)==0) rep_cols_p0 <- grep("P0", names(p0), value = TRUE)
 rep_cols_p2 <- grep("P2_\\d+$", names(p2), value = TRUE); if (length(rep_cols_p2)==0) rep_cols_p2 <- grep("P2", names(p2), value = TRUE)
 rep_cols_p0 <- sort(rep_cols_p0); rep_cols_p2 <- sort(rep_cols_p2)
 stopifnot(length(rep_cols_p0) > 0, length(rep_cols_p2) > 0)
 
-# -------- 宽转长（带 treatment 标签）--------
+# -------- Wide to long (with treatment label) --------
 long_p0 <- p0 %>%
   select(asv_id, all_of(tax_cols), all_of(rep_cols_p0)) %>%
   pivot_longer(all_of(rep_cols_p0), names_to = "replicate", values_to = "EAF") %>%
@@ -100,14 +100,14 @@ long_all <- bind_rows(long_p0, long_p2) %>%
   replace_na(list(EAF = 0))
 
 # ============================================================
-# 显著性筛选：对每个 Family，用 Wilcoxon 检验 P0 vs P2（各3重复）
+# Significance filtering: For each Family, use Wilcoxon test P0 vs P2 (3 replicates each)
 # ============================================================
-# Family×replicate 的 EAF（每重复先把 ASV 求和）
+# Family × replicate EAF (sum ASVs per replicate first)
 fam_rep <- long_all %>%
   group_by(treatment, replicate, Family) %>%
   summarise(EAF = sum(EAF, na.rm = TRUE), .groups = "drop")
 
-# 对每个 Family 计算 p 值 + 组内均值差（作次序兜底）
+# Calculate p-value + mean difference within group for each Family (as fallback order)
 fam_stats <- fam_rep %>%
   group_by(Family) %>%
   summarise(
@@ -128,7 +128,7 @@ fam_stats <- fam_rep %>%
   mutate(abs_diff = abs(mean_P2 - mean_P0)) %>%
   arrange(pvalue, desc(abs_diff))
 
-# 选 Top50（不再用 n()；直接 head(50)）
+# Select Top50 (no longer using n(); directly head(50))
 family_keep <- fam_stats %>%
   filter(!is.na(pvalue)) %>%
   pull(Family) %>%
@@ -138,15 +138,15 @@ family_keep <- fam_stats %>%
 stopifnot(length(family_keep) > 0)
 
 # ============================================================
-# 构造绘图数据
+# Construct plotting data
 # ============================================================
-# 1) 热图：Family × replicate 的 EAF（P0+P2），仅保留 family_keep
+# 1) Heatmap: Family × replicate EAF (P0+P2), keep only family_keep
 heat_sum <- long_all %>%
   filter(Family %in% family_keep) %>%
   group_by(Phylum, Family, replicate) %>%
   summarise(EAF = sum(EAF, na.rm = TRUE), .groups = "drop")
 
-# 2) 每个 Family 的代表 Phylum（多数出现）
+# 2) Representative Phylum for each Family (majority occurrence)
 phylum_map <- long_all %>%
   filter(Family %in% family_keep) %>%
   count(Family, Phylum, name = "n") %>%
@@ -158,17 +158,17 @@ phylum_map <- long_all %>%
     Phylum_main = if_else(is.na(Phylum) | Phylum == "", "Unassigned", as.character(Phylum))
   )
 
-# 3) 右侧 ASV 数（筛选集合内）
+# 3) ASV count on right (within filtered set)
 asv_count <- long_all %>%
   filter(Family %in% family_keep) %>%
   distinct(Family, asv_id) %>%
   count(Family, name = "ASV_n") %>%
   mutate(Family = as.character(Family))
 
-# 4) 列顺序（6 列：P0在前，P2在后）
+# 4) Column order (6 columns: P0 first, P2 second)
 rep_levels <- c(rep_cols_p0, rep_cols_p2)
 
-# 5) 行顺序：按 Phylum 分块，块内按 **P2 总 EAF** 降序（与之前规则一致）
+# 5) Row order: Group by Phylum, within group descending by **P2 total EAF** (consistent with previous rule)
 order_by_p2 <- fam_rep %>%
   filter(Family %in% family_keep, treatment == "P2") %>%
   group_by(Family) %>%
@@ -185,10 +185,10 @@ family_order_df <- heat_sum %>%
   ) %>%
   arrange(Phylum_main, desc(total_P2_EAF), Family)
 
-# 让总量大的靠上（ggplot y 轴默认从下往上）
+# Put larger values at the top (ggplot y-axis goes from bottom to top)
 family_levels <- rev(family_order_df$Family)
 
-# 6) 完整热图数据（补全 Family×replicate），并确保 Phylum_main 存在
+# 6) Complete heatmap data (fill Family × replicate), ensure Phylum_main exists
 heat_df <- tidyr::expand_grid(
   Family    = family_levels,
   replicate = rep_levels
@@ -202,13 +202,13 @@ heat_df <- tidyr::expand_grid(
     replicate = factor(replicate, levels = rep_levels)
   )
 
-# 7) 左/右文本数据（从 phylum_map 与 asv_count 构造，避免缺列）
+# 7) Left/right text data (constructed from phylum_map and asv_count, avoid missing columns)
 left_text <- tibble(Family = factor(family_levels, levels = family_levels)) %>%
   mutate(Family_chr = as.character(Family)) %>%
   left_join(phylum_map, by = c("Family_chr" = "Family")) %>%
   mutate(Phylum_main = if_else(is.na(Phylum_main) | Phylum_main == "", "Unassigned", Phylum_main)) %>%
   group_by(Phylum_main) %>%
-  mutate(phylum_label = if_else(row_number() == 1, Phylum_main, "")) %>%  # 门名写在组“第一行”（最上面）
+  mutate(phylum_label = if_else(row_number() == 1, Phylum_main, "")) %>%  # Write Phylum name at group "first row" (top)
   ungroup() %>%
   select(Family, phylum_label)
 
@@ -219,12 +219,12 @@ right_text <- tibble(Family = factor(family_levels, levels = family_levels)) %>%
   select(Family, ASV_n)
 
 # ============================================================
-# 作图（4色梯度：0 最浅）
+# Plot (4-color gradient: 0 lightest)
 # ============================================================
 pal_EAF     <- c("#fef0d9","#fda269","#ed6541","#cc2f1c")
 fill_limits <- c(0, max(heat_df$EAF, na.rm = TRUE))
 
-# 左：Phylum 文本
+# Left: Phylum text
 p_left <- ggplot(left_text, aes(x = 1, y = Family, label = phylum_label)) +
   geom_text(hjust = 1) +
   scale_x_continuous(limits = c(0.5, 1.5), breaks = 1, labels = "Phylum") +
@@ -237,7 +237,7 @@ p_left <- ggplot(left_text, aes(x = 1, y = Family, label = phylum_label)) +
     panel.grid  = element_blank()
   )
 
-# 中：6 列热图
+# Middle: 6-column heatmap
 p_heat <- ggplot(heat_df, aes(x = replicate, y = Family, fill = EAF)) +
   geom_tile() +
   scale_fill_gradientn(colours = pal_EAF, limits = fill_limits, oob = squish, name = "EAF") +
@@ -250,7 +250,7 @@ p_heat <- ggplot(heat_df, aes(x = replicate, y = Family, fill = EAF)) +
     legend.position = "right"
   )
 
-# 右：ASV 数
+# Right: ASV count
 p_right <- ggplot(right_text, aes(x = 1, y = Family, label = ASV_n)) +
   geom_text(fontface = "bold", size = 3.3) +
   scale_x_continuous(limits = c(0.5, 1.5), breaks = 1, labels = "ASVs") +
@@ -265,7 +265,7 @@ p_right <- ggplot(right_text, aes(x = 1, y = Family, label = ASV_n)) +
 
 final_plot <- p_left + p_heat + p_right + plot_layout(widths = c(2.4, 6, 1.4))
 
-# 导出 PDF（矢量）
+# Export PDF (vector)
 ok <- FALSE
 try({
   ggsave(out_pdf, final_plot, width = 13, height = 10, units = "in", device = cairo_pdf)
@@ -277,19 +277,14 @@ if (!ok) {
 message("Saved PDF: ", out_pdf)
 
 
-
-
-
-
-
-##黑土红壤合并，筛选显著的ASV，按照科水平汇总后绘图，标记+-显著性
+## Combine black soil and red soil, filter significant ASVs, summarize at Family level and plot, mark +/- significance
 # ============================================================
-# 同土壤内 P0 vs P2 的 t-test （α=0.05）筛 ASV → Family 汇总热图
-# 右侧：B/R 显著性（+/-）与 ASV 数；左侧：Phylum 仅首行显示
-# 显式使用 dplyr:: / tidyr:: 避免 select() 冲突
+# Within-soil P0 vs P2 t-test (α=0.05) filter ASVs → Family summary heatmap
+# Right side: B/R significance (+/-) and ASV count; Left side: Phylum only shown at first row
+# Explicitly use dplyr:: / tidyr:: to avoid select() conflicts
 # ============================================================
 
-# 建议只加载必要包，避免命名冲突
+# Recommend loading only necessary packages to avoid naming conflicts
 library(dplyr)
 library(tidyr)
 library(readr)
@@ -297,7 +292,7 @@ library(ggplot2)
 library(patchwork)
 library(scales)
 
-# ---------- 文件路径 ----------
+# ---------- File paths ----------
 files <- list(
   B_P0 = "B_D1_P0_2.txt",
   B_P2 = "B_D1_P2_2.txt",
@@ -305,28 +300,28 @@ files <- list(
   R_P2 = "R_D1_P2_2.txt"
 )
 
-# ---------- 读取为长表（显式 dplyr::/tidyr::） ----------
+# ---------- Read as long format (explicit dplyr::/tidyr::) ----------
 read_and_pivot <- function(path, soil_tag, treat_tag){
   df <- readr::read_tsv(path, show_col_types = FALSE)
   
-  # 统一列名：asv_id
+  # Standardize column name: asv_id
   if (!("asv_id" %in% names(df))) names(df)[1] <- "asv_id"
   
-  # 必要分类列
+  # Required taxonomic columns
   need_tax <- c("Phylum","Family")
   if (!all(need_tax %in% names(df))) {
-    stop(paste0("文件缺少必须的分类列 Phylum/Family: ", path))
+    stop(paste0("File missing required taxonomic columns Phylum/Family: ", path))
   }
   
-  # 识别该处理的重复列（尽量稳健）
-  # 优先严格匹配，比如 P0_1 / P2_2；否则退化为包含 "P0"/"P2" 的列（不区分大小写）
+  # Identify replicate columns for this treatment (robust approach)
+  # First try strict match, e.g., P0_1 / P2_2; otherwise fallback to columns containing "P0"/"P2" (case insensitive)
   rep_cols <- grep(paste0("^", treat_tag, "(_\\d+)?$"), names(df), value = TRUE)
   if (length(rep_cols) == 0) {
     rep_cols <- names(df)[grepl(treat_tag, names(df), ignore.case = TRUE)]
   }
   rep_cols <- setdiff(rep_cols, c("asv_id","Phylum","Family"))
   if (length(rep_cols) == 0) {
-    stop(paste0("未找到处理列: ", treat_tag, " in ", path))
+    stop(paste0("No treatment columns found: ", treat_tag, " in ", path))
   }
   
   df %>%
@@ -353,7 +348,7 @@ long_all <- dplyr::bind_rows(
     Phylum = dplyr::if_else(Phylum == "" | is.na(Phylum), "Unassigned", Phylum)
   )
 
-# ---------- ASV 层：同土壤内 P0 vs P2 的 t-test（3 vs 3） ----------
+# ---------- ASV level: Within-soil P0 vs P2 t-test (3 vs 3) ----------
 asv_rep <- long_all %>%
   dplyr::group_by(Soil, Treatment, replicate, asv_id, Phylum, Family) %>%
   dplyr::summarise(EAF = sum(EAF, na.rm = TRUE), .groups = "drop")
@@ -379,24 +374,24 @@ asv_sig <- asv_rep %>%
 sel_asv <- asv_sig %>% dplyr::pull(asv_id) %>% unique()
 stopifnot(length(sel_asv) > 0)
 
-# ---------- Family 层：基于“显著 ASV 集”聚合 ----------
+# ---------- Family level: Aggregate based on "significant ASV set" ----------
 fam_rep <- asv_rep %>%
   dplyr::filter(asv_id %in% sel_asv) %>%
   dplyr::group_by(Soil, Treatment, replicate, Phylum, Family) %>%
   dplyr::summarise(EAF = sum(EAF, na.rm = TRUE), .groups = "drop")
 
-# 用于热图显示的均值（每处理 3 重复的均值）
+# Mean values for heatmap display (mean of 3 replicates per treatment)
 fam_mean <- fam_rep %>%
   dplyr::group_by(Soil, Treatment, Phylum, Family) %>%
   dplyr::summarise(EAF_mean = mean(EAF, na.rm = TRUE), .groups = "drop")
 
-# 每个科包含的“显著 ASV 数”
+# Number of "significant ASVs" per Family
 asv_count <- asv_rep %>%
   dplyr::filter(asv_id %in% sel_asv) %>%
   dplyr::distinct(Family, asv_id) %>%
   dplyr::count(Family, name = "ASV_n")
 
-# Family 层：同土壤内 P0 vs P2 的 t-test（用于 +/− 标注）
+# Family level: Within-soil P0 vs P2 t-test (for +/- annotation)
 fam_sig <- fam_rep %>%
   dplyr::group_by(Soil, Family) %>%
   dplyr::summarise(
@@ -419,7 +414,7 @@ fam_sig <- fam_rep %>%
     .groups = "drop"
   )
 
-# ---------- 热图数据（4 列：B_P0, B_P2, R_P0, R_P2） ----------
+# ---------- Heatmap data (4 columns: B_P0, B_P2, R_P0, R_P2) ----------
 heat_mat <- fam_mean %>%
   dplyr::transmute(
     Family, Phylum,
@@ -448,7 +443,7 @@ heat_df <- tidyr::expand_grid(
     EAF    = dplyr::coalesce(EAF, 0)
   )
 
-# 行排序：按 Phylum 分组，组内按 max(B_P2, R_P2) 降序（大的在上）
+# Row order: Group by Phylum, within group descending by max(B_P2, R_P2) (larger at top)
 order_key <- heat_df %>%
   dplyr::filter(column %in% c("B_P2","R_P2")) %>%
   dplyr::group_by(Family, Phylum) %>%
@@ -464,7 +459,7 @@ heat_df <- heat_df %>%
     Phylum = dplyr::if_else(Phylum == "" | is.na(Phylum), "Unassigned", Phylum)
   )
 
-# 右侧显著性（B/R 两列）
+# Right side significance (B/R two columns)
 right_sig <- tidyr::expand_grid(
   Family = family_levels,
   soil_col = c("B","R")
@@ -477,14 +472,14 @@ right_sig <- tidyr::expand_grid(
   ) %>%
   dplyr::transmute(Family, soil_col, label = dplyr::na_if(sign_lab, ""))
 
-# 右侧 ASV 数
+# Right side ASV count
 right_asv <- tibble::tibble(Family = family_levels) %>%
   dplyr::mutate(Family_chr = as.character(Family)) %>%
   dplyr::left_join(asv_count, by = c("Family_chr" = "Family")) %>%
   dplyr::mutate(ASV_n = dplyr::coalesce(ASV_n, 0L)) %>%
   dplyr::select(Family, ASV_n)
 
-# 左侧 Phylum 文本（仅首行）
+# Left side Phylum text (only first row)
 left_text <- heat_df %>%
   dplyr::distinct(Family, Phylum) %>%
   dplyr::arrange(Family) %>%
@@ -493,7 +488,7 @@ left_text <- heat_df %>%
   dplyr::ungroup() %>%
   dplyr::select(Family, phylum_label)
 
-# ---------- 作图 ----------
+# ---------- Plot ----------
 pal_EAF <- c("#fef0d9","#fda269","#ed6541","#cc2f1c")
 fill_limits <- c(0, max(heat_df$EAF, na.rm = TRUE))
 
@@ -537,4 +532,3 @@ final_plot <- p_left + p_heat + p_right_sig + p_right_asv +
 
 ggsave("heatmap_Family_sigASV_by_soil.pdf", final_plot,
        width = 11.5, height = 12, units = "in", device = cairo_pdf)
-
